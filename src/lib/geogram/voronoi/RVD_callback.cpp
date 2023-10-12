@@ -872,6 +872,7 @@ namespace GEO {
 	    cell_id_.unbind();
 	    seed_id_.unbind();
 	    vertex_id_.unbind();
+        vertex_gen_.unbind();
 	    facet_seed_id_.unbind();
 	    delete global_vertex_map_;
 	    global_vertex_map_ = nullptr;
@@ -895,6 +896,9 @@ namespace GEO {
 	    vertex_id_.bind(
 		output_mesh_.vertices.attributes(), "vertex_id"
 	    );
+        vertex_gen_.create_vector_attribute(
+                output_mesh_.vertices.attributes(), "vertex_gen", 6
+        );
 	    facet_seed_id_.bind(
 		output_mesh_.facets.attributes(), "facet_seed_id"
 	    );
@@ -903,6 +907,7 @@ namespace GEO {
 	    cell_id_.unbind();
 	    seed_id_.unbind();
 	    vertex_id_.unbind();
+        vertex_gen_.unbind();
 	    facet_seed_id_.unbind();
 	    delete global_vertex_map_;
 	    global_vertex_map_ = nullptr;
@@ -951,9 +956,16 @@ namespace GEO {
 	if(v >= output_mesh_.vertices.nb()) {
 	    output_mesh_.vertices.create_vertex(geometry);
 	    if(generate_ids_) {
-		vertex_id_[v] = int(
-		    global_vertex_map_->find_or_create_vertex(seed(), symb)
-		    );
+            vertex_id_[v] = int(
+                global_vertex_map_->find_or_create_vertex(seed(), symb)
+                );
+            int ii = 0;
+            vertex_gen_[v * 6 + ii++] = seed();
+            for (int generator : symb) {
+                vertex_gen_[v * 6 + ii++] = generator;
+            }
+            vertex_gen_[v * 6 + ii++] = symb.v1_ - 1;
+            vertex_gen_[v * 6 + ii++] = symb.v2_ - 1;
 	    }
 	}
 	current_facet_.push_back(v);

@@ -594,6 +594,7 @@ namespace GEO {
 	Attribute<int> cell_id_;
 	Attribute<int> seed_id_;
 	Attribute<int> vertex_id_;
+	Attribute<int> vertex_gen_;
 	Attribute<int> facet_seed_id_;
 	index_t current_cell_id_;
     };

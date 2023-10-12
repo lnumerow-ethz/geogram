@@ -639,7 +639,7 @@ namespace GEOGen {
             return true;
         }
 
-    private:
+    public:
         index_t v1_;
         index_t v2_;
     };

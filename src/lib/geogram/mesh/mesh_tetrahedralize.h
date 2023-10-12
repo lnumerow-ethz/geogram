@@ -144,6 +144,7 @@ namespace GEO {
 	bool keep_regions=false, double eps = 0.001
     ) {
         MeshTetrahedralizeParameters params;
+        params.verbose = false;
         params.preprocess = preprocess;
         params.preprocess_merge_vertices_epsilon = eps;
         params.refine = refine;
