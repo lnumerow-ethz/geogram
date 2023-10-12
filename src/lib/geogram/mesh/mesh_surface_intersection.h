@@ -90,6 +90,26 @@ namespace GEO {
         }
 
         /**
+         * \brief Sets the threshold from which triangle is considered 
+         *  to be a monster.
+         * \details Monster triangles are saved to a file for the zoo.
+         * \param[in] nb if a triangle has more than \p nb intersections
+         *  in it, then it is considered to be a monster. 
+         */
+        void set_monster_threshold(index_t nb) {
+            monster_threshold_ = nb;
+        }
+
+        /**
+         * \brief In dry run mode, the computed local triangulations
+         *  are not inserted in the global mesh. This is for benchmarking.
+         *  Default is off.
+         */
+        void set_dry_run(bool x) {
+            dry_run_ = x;
+        }
+
+        /**
          * \brief If set, compute constrained Delaunay triangulation
          *  in the intersected triangles. If there are intersections
          *  in coplanar facets, it guarantees uniqueness of their
@@ -112,7 +132,7 @@ namespace GEO {
          *  around radial edge. Default is unset.
          */
         void set_approx_radial_sort(bool x) {
-            radial_sort_.set_approx_predicates(x);
+            approx_radial_sort_ = x;
         }
         
         /** 
@@ -145,9 +165,7 @@ namespace GEO {
         void set_normalize(bool x) {
             normalize_ = x;
         }
-        
-        void save_exact(const std::string& filename);
-        
+
     protected:
 
         /**
@@ -226,14 +244,18 @@ namespace GEO {
             return mesh_copy_;
         }
 
+        class RadialSort;
+        
         /**
          * \brief Sorts a range of halfedges in radial order
+         * \param[in] RS a reference to a RadialSort
          * \param[in] b , e iterators in a vector of halfedge indices
          * \retval true if everything went well
          * \retval false if two triangles are coplanar with same normal
          *  orientation
          */
         bool radial_sort(
+            RadialSort& RS,
             vector<index_t>::iterator b, vector<index_t>::iterator e
         );
         
@@ -392,6 +414,15 @@ namespace GEO {
              *  direction and orientation as \p p2 - \p p1
              */
             static vec3E exact_direction(const vec3HE& p1, const vec3HE& p2);
+
+            /**
+             * \brief Computes an interval vector of arbitrary length with its 
+             *  direction given by two points 
+             * \param[in] p1 , p2 the two points in homogeneous coordinates
+             * \return an interval vector in cartesian coordinates 
+             *  with the same direction and orientation as \p p2 - \p p1
+             */
+            static vec3I exact_direction_I(const vec3HE& p1, const vec3HE& p2);
             
         protected:
 
@@ -423,10 +454,10 @@ namespace GEO {
                 Sign oN_ref2 = h_refNorient(h2);
                 Sign o_12 = h_orient(h1,h2);
                 std::cerr
-                    << " o_ref1=" << int(o_ref1) << " o_ref2=" << int(o_ref2)
-                    << " oN_ref1=" << int(oN_ref1) << " oN_ref2=" << int(oN_ref2)
-                    << " o_12=" << int(o_12)
-                    << std::endl;
+                   << " o_ref1=" << int(o_ref1) << " o_ref2=" << int(o_ref2)
+                   << " oN_ref1=" << int(oN_ref1) << " oN_ref2=" << int(oN_ref2)
+                   << " o_12=" << int(o_12)
+                   << std::endl;
             }
             
         private:
@@ -436,6 +467,9 @@ namespace GEO {
             vec3E U_ref_;   // -.
             vec3E V_ref_;   //  +-reference basis
             vec3E N_ref_;   // -'
+            vec3I U_ref_I_; // -.
+            vec3I V_ref_I_; //  +-reference basis (interval arithmetics)
+            vec3I N_ref_I_; // _'
             mutable vector< std::pair<index_t, Sign> > refNorient_cache_;
             mutable bool degenerate_;
         };
@@ -449,15 +483,18 @@ namespace GEO {
         Attribute<index_t> facet_corner_alpha3_;
         Attribute<bool> facet_corner_degenerate_;
         std::map<vec3HE,index_t,vec3HELexicoCompare> exact_point_to_vertex_;
-        RadialSort radial_sort_;
+        // RadialSort radial_sort_;
         bool verbose_;
         bool delaunay_;
         bool detect_intersecting_neighbors_;
         bool approx_incircle_;
         bool use_radial_sort_;
+        bool approx_radial_sort_;
         bool normalize_;
         vec3 normalize_center_;
         double normalize_radius_;
+        index_t monster_threshold_;
+        bool dry_run_;
         friend class MeshInTriangle;
     };
     

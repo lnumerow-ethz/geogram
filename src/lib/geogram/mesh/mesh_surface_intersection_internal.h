@@ -49,9 +49,12 @@
 #include <geogram/mesh/mesh_surface_intersection.h>
 #include <geogram/mesh/mesh.h>
 #include <geogram/mesh/mesh_io.h>
+#include <geogram/mesh/index.h>
 #include <geogram/mesh/triangle_intersection.h>
 #include <geogram/delaunay/CDT_2d.h>
 #include <geogram/numerics/exact_geometry.h>
+
+#include <map>
 
 namespace GEO {
 
@@ -73,11 +76,9 @@ namespace GEO {
         /**
          * \brief An edge of the mesh.
          * \details It represents the constraints to be used by the
-         *  constrained triangulation to remesh the facet. It contains
-         *  a list of vertices coming from the intersection with other
-         *  constrained edge. Makes a maximum use of the combinatorial
-         *  information to reduce the complexity (degree) of the constructed
-         *  coordinates as much as possible.
+         *  constrained triangulation to remesh the facet. Makes a maximum 
+         *  use of the combinatorial information to reduce the complexity 
+         *  (degree) of the constructed coordinates as much as possible.
          */
         class Edge {
         public:
@@ -120,9 +121,7 @@ namespace GEO {
              *  MeshInTriangle's current facet
              * \param[in] lv local vertex index in \p f
              */
-            Vertex(
-                MeshInTriangle* M, index_t f, index_t lv
-            ) {
+            Vertex(MeshInTriangle* M, index_t f, index_t lv) {
                 geo_assert(f == M->f1_);
                 type = MESH_VERTEX;
                 mit = M;
@@ -277,6 +276,15 @@ namespace GEO {
         }
 
         /**
+         * \brief In dry run mode, the computed local triangulations
+         *  are not inserted in the global mesh. This is for benchmarking.
+         *  Default is off.
+         */
+        void set_dry_run(bool x) {
+            dry_run_ = x;
+        }
+        
+        /**
          * \brief For debugging, save constraints to a file
          * \param[in] filename a mesh filename where to solve the constraints
          *  (.obj or .geogram)
@@ -297,18 +305,24 @@ namespace GEO {
             TriangleRegion BR1, TriangleRegion BR2
         );
 
-        void end_facet() {
-            commit();
-            clear();
-        }
-
-    protected:
-
         /**
          * \brief Creates new vertices and new triangles in target mesh
          */
         void commit();
 
+        
+        void clear() override {
+            vertex_.resize(0);
+            edges_.resize(0);
+            f1_ = index_t(-1);
+            CDTBase2d::clear();
+        }
+
+        void clear_cache() override  {
+            pred_cache_.clear();
+        }
+
+    protected:
         /**
          * \brief For debugging, copies the constraints to a mesh
          */
@@ -333,12 +347,6 @@ namespace GEO {
             return mesh_vertex_UV(v);
         }
         
-        void clear() override {
-            vertex_.resize(0);
-            edges_.resize(0);
-            f1_ = index_t(-1);
-            CDTBase2d::clear();
-        }
 
         void log_err() const {
             std::cerr << "Houston, we got a problem (while remeshing facet "
@@ -431,6 +439,8 @@ namespace GEO {
         vector<Edge> edges_;
         bool has_planar_isect_;
         bool approx_incircle_;
+        bool dry_run_;
+        mutable std::map<trindex, Sign> pred_cache_;
     };
 
     /*************************************************************************/

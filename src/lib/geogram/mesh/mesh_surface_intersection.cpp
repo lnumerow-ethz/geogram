@@ -50,6 +50,7 @@
 #include <geogram/numerics/predicates.h>
 #include <geogram/numerics/expansion_nt.h>
 #include <geogram/basic/stopwatch.h>
+#include <geogram/basic/permutation.h>
 
 #include <sstream>
 #include <stack>
@@ -158,6 +159,24 @@ namespace {
         vec3 q3(M.vertices.point_ptr(M.facets.vertex(f2,2)));
         return triangles_intersections(p1,p2,p3,q1,q2,q3,I);
     }
+
+    PCK_STAT(Numeric::uint64 href_norient_calls = 0;)
+    PCK_STAT(Numeric::uint64 href_norient_filter_success = 0;)
+
+#ifdef PCK_STATS
+    void radial_sort_stats() {
+            Logger::out("PCK") << "href_Norient:" << std::endl;
+            Logger::out("PCK") << href_norient_calls
+                               << " href_Norient calls" << std::endl;
+            Logger::out("PCK") << href_norient_filter_success
+                               << " href_Norient filter success" << std::endl;
+            Logger::out("PCK") << 100.0 *
+                                  double(href_norient_filter_success) /
+                                  double(href_norient_calls)
+                               << "% filter success" << std::endl;
+    }
+#endif
+    
 }
 
 
@@ -167,8 +186,9 @@ namespace GEO {
         lock_(GEOGRAM_SPINLOCK_INIT),
         mesh_(M),
         vertex_to_exact_point_(M.vertices.attributes(), "exact_point"),
-        radial_sort_(*this),
-        normalize_(true) {
+        normalize_(true),
+        dry_run_(false)
+    {
         for(index_t v: mesh_.vertices) {
             vertex_to_exact_point_[v] = nullptr;
         }
@@ -177,6 +197,8 @@ namespace GEO {
         approx_incircle_ = false;
         detect_intersecting_neighbors_ = true;
         use_radial_sort_ = true;
+        approx_radial_sort_ = false;
+        monster_threshold_ = index_t(-1);
     }
 
     MeshSurfaceIntersection::~MeshSurfaceIntersection() {
@@ -198,7 +220,6 @@ namespace GEO {
         mesh_.facets.delete_elements(remove_f);
     }
 
-    
     void MeshSurfaceIntersection::intersect() {
 
         // Step 1: Preparation
@@ -382,6 +403,27 @@ namespace GEO {
             );
         }
 
+        // Apply a random permutation to the facets, so that
+        // each job done in parallel receives statistatically
+        // the same amount of hard cases / easy cases (else
+        // spatial sorting tends to gather all difficulties
+        // in an index range processed by the same thread).
+        // TODO: a version of parallel_for() with smarter
+        // (dynamic) thread scheduling.
+        {
+            vector<index_t> reorder(mesh_.facets.nb());
+            for(index_t f: mesh_.facets) {
+                reorder[f] = f;
+            }
+            std::random_shuffle(reorder.begin(), reorder.end());
+            for(IsectInfo& II: intersections) {
+                II.f1 = reorder[II.f1];
+                II.f2 = reorder[II.f2];
+            }
+            Permutation::invert(reorder);
+            mesh_.facets.permute_elements(reorder);
+        }
+        
         // We need to copy the initial mesh, because MeshInTriangle needs
         // to access it in parallel threads, and without a copy, the internal
         // arrays of the mesh can be modified whenever there is a
@@ -448,6 +490,10 @@ namespace GEO {
         
             
 #define TRIANGULATE_IN_PARALLEL
+
+            Process::spinlock log_lock = GEOGRAM_SPINLOCK_INIT;
+            index_t f_done = 0;
+            index_t f_tot = (start.size()-1); 
             
             #ifdef TRIANGULATE_IN_PARALLEL
                parallel_for_slice(
@@ -460,18 +506,27 @@ namespace GEO {
             MeshInTriangle MIT(*this);
             MIT.set_delaunay(delaunay_);
             MIT.set_approx_incircle(approx_incircle_);
-
+            MIT.set_dry_run(dry_run_);
+            
+            index_t tid = Thread::current_id();
+            
             for(index_t k=k1; k<k2; ++k) {
                 index_t b = start[k];
                 index_t e = start[k+1];
-#ifndef TRIANGULATE_IN_PARALLEL                
+
                 if(verbose_) {
-                    std::cerr << "Isects in " << intersections[b].f1
-                              << " / " << mesh_copy_.facets.nb()              
-                              << "    : " << (e-b)
-                              << std::endl;
+                    Process::acquire_spinlock(log_lock);
+                    ++f_done;
+                    Logger::out("Isect")
+                        << String::format(
+                            "[%2d] %5d/%5d    %6d:%3d",
+                            int(tid), int(f_done), int(f_tot),
+                            int(intersections[b].f1), int(e-b)
+                        )
+                        << std::endl;
+                    Process::release_spinlock(log_lock);
                 }
-#endif
+
                 MIT.begin_facet(intersections[b].f1);
                 for(index_t i=b; i<e; ++i) {
                     const IsectInfo& II = intersections[i];
@@ -495,7 +550,47 @@ namespace GEO {
                         );
                     }
                 }
-                MIT.end_facet();
+
+                // Inserts constraints and creates new vertices in shared mesh
+                MIT.commit();
+                
+                if(e-b >= monster_threshold_) {
+                    Process::acquire_spinlock(log_lock);
+                    index_t f = intersections[b].f1;
+                    MIT.save("triangulation_"+String::to_string(f)+".geogram");
+                    MIT.save_constraints(
+                        "constraints_"+String::to_string(f)+".geogram"
+                    );
+                    std::ofstream out("facet_"+String::to_string(f)+".obj");
+                    for(
+                        index_t lv=0; lv<mesh_copy_.facets.nb_vertices(f); ++lv
+                    ) {
+                        index_t v = mesh_copy_.facets.vertex(f,lv);
+                        vec3 p(mesh_copy_.vertices.point_ptr(v));
+                        p=INV_SCALING*p;
+                        if(normalize_) {
+                            p = normalize_radius_*p + normalize_center_;
+                        }
+                        out << "v " << p << std::endl;
+                    }
+                    out << "f ";
+                    for(
+                        index_t lv=0; lv<mesh_copy_.facets.nb_vertices(f); ++lv
+                    ) {
+                        out << lv+1 << " ";
+                    }
+                    out << std::endl;
+                    Process::release_spinlock(log_lock);
+                }
+
+                // Clear it so that it is clean for next triangle.
+                MIT.clear();
+            }
+            if(verbose_) {
+                Process::acquire_spinlock(log_lock);
+                Logger::out("Isect") << String::format("[%2d] done",int(tid))
+                                     << std::endl;
+                Process::release_spinlock(log_lock);
             }
         #ifdef TRIANGULATE_IN_PARALLEL
            });
@@ -538,6 +633,14 @@ namespace GEO {
                 }
             }
         }
+
+#ifdef PCK_STATS
+        if(verbose_) {
+            PCK::orient_2d_projected_stats();
+            radial_sort_stats();
+        }
+#endif    
+
     }
     
     
@@ -551,13 +654,6 @@ namespace GEO {
         return vec3HE(xyz[0], xyz[1], xyz[2], 1.0);
     }
 
-    /**
-     * \brief Computes a vector of arbitrary length with its direction given
-     *   by two points 
-     * \param[in] p1 , p2 the two points in homogeneous coordinates
-     * \return a vector in cartesian coordinates with the same direction 
-     *  and orientation as \p p2 - \p p1
-     */
     vec3E MeshSurfaceIntersection::RadialSort::exact_direction(
         const vec3HE& p1, const vec3HE& p2
     ) {
@@ -584,6 +680,28 @@ namespace GEO {
         U.x.optimize();
         U.y.optimize();
         U.z.optimize();        
+        return U;
+    }
+
+    vec3I MeshSurfaceIntersection::RadialSort::exact_direction_I(
+        const vec3HE& p1, const vec3HE& p2
+    ) {
+        interval_nt::Rounding rounding;
+        
+        interval_nt w1(p1.w);
+        interval_nt w2(p2.w);
+        vec3I U(
+            det2x2(interval_nt(p2.x), w2, interval_nt(p1.x), w1),
+            det2x2(interval_nt(p2.y), w2, interval_nt(p1.y), w1),
+            det2x2(interval_nt(p2.z), w2, interval_nt(p1.z), w1)
+        );
+        
+        if(p1.w.sign()*p2.w.sign() < 0) {
+            U.x.negate();
+            U.y.negate();
+            U.z.negate();
+        }
+
         return U;
     }
     
@@ -630,6 +748,23 @@ namespace GEO {
         N_ref_.x.optimize();
         N_ref_.y.optimize();
         N_ref_.z.optimize();
+
+        // Reference frame in interval arithmetics.
+        {
+            interval_nt::Rounding rounding;
+            
+            U_ref_I_.x = U_ref_.x;
+            U_ref_I_.y = U_ref_.y;
+            U_ref_I_.z = U_ref_.z;
+        
+            V_ref_I_.x = V_ref_.x;
+            V_ref_I_.y = V_ref_.y;
+            V_ref_I_.z = V_ref_.z;        
+
+            N_ref_I_.x = N_ref_.x;
+            N_ref_I_.y = N_ref_.y;
+            N_ref_I_.z = N_ref_.z;
+        }
     }
 
     bool MeshSurfaceIntersection::RadialSort::operator()(
@@ -702,12 +837,15 @@ namespace GEO {
         return o_12 > 0;
     }
 
+
+    
     Sign MeshSurfaceIntersection::RadialSort::h_orient(
         index_t h1, index_t h2
     ) const {
         if(h1 == h2) {
             return ZERO;
         }
+        
         index_t v0 = mesh_.halfedge_vertex(h1,0);
         index_t v1 = mesh_.halfedge_vertex(h1,1);
         index_t w1 = mesh_.halfedge_vertex(h1,2);
@@ -715,31 +853,37 @@ namespace GEO {
         geo_assert(mesh_.halfedge_vertex(h2,1) == v1);            
         index_t w2 = mesh_.halfedge_vertex(h2,2);
 
+        // TODO: double-check that sign corresponds
+        // to documentation.
+        
         if(approx_predicates_) {
             vec3 p0(mesh_.target_mesh().vertices.point_ptr(v0));
             vec3 p1(mesh_.target_mesh().vertices.point_ptr(v1));
             vec3 q1(mesh_.target_mesh().vertices.point_ptr(w1));
             vec3 q2(mesh_.target_mesh().vertices.point_ptr(w2));
             return Sign(-PCK::orient_3d(p0,p1,q1,q2));
-            // Too stupid, it seems that orient_3d for vec3HE is inverted
-            // as compared to vec3 (to be double-checked)
-        } 
+        }
+        
         const vec3HE& p0 = mesh_.exact_vertex(v0);
         const vec3HE& p1 = mesh_.exact_vertex(v1);
         const vec3HE& q1 = mesh_.exact_vertex(w1);
         const vec3HE& q2 = mesh_.exact_vertex(w2);
-        return PCK::orient_3d(p0,p1,q1,q2);
+        return Sign(-PCK::orient_3d(p0,p1,q1,q2));
     }
+
     
     Sign MeshSurfaceIntersection::RadialSort::h_refNorient(index_t h2) const {
         if(h2 == h_ref_) {
             return POSITIVE;
         }
+        
         for(const auto& c: refNorient_cache_) {
             if(c.first == h2) {
                 return c.second;
             }
         }
+
+        PCK_STAT(++href_norient_calls;)
 
         if(approx_predicates_) {
             index_t v0 = mesh_.halfedge_vertex(h_ref_,0);
@@ -754,34 +898,53 @@ namespace GEO {
             vec3 N2 = cross(p1-p0,q2-p0);
             return geo_sgn(dot(N1,N2));
         }
+
+        Sign result = ZERO;
+        {
+            interval_nt::Rounding rounding;
+            vec3I V2 = exact_direction_I(
+                mesh_.exact_vertex(mesh_.halfedge_vertex(h2,0)),
+                mesh_.exact_vertex(mesh_.halfedge_vertex(h2,2))
+            );
+            vec3I N2 = cross(U_ref_I_, V2);
+            interval_nt d = dot(N_ref_I_, N2);
+            interval_nt::Sign2 s = d.sign();
+            if(interval_nt::sign_is_non_zero(s)) {
+                result = interval_nt::convert_sign(s);
+                PCK_STAT(++href_norient_filter_success;)
+            }
+        }
+
+        if(result == ZERO) {
+            vec3E V2 = exact_direction(
+                mesh_.exact_vertex(mesh_.halfedge_vertex(h2,0)),
+                mesh_.exact_vertex(mesh_.halfedge_vertex(h2,2))
+            );
+            vec3E N2 = cross(U_ref_, V2);
+            N2.x.optimize();
+            N2.y.optimize();
+            N2.z.optimize();
+            result = dot(N_ref_,N2).sign();
+        } 
         
-        vec3E V2 = exact_direction(
-            mesh_.exact_vertex(mesh_.halfedge_vertex(h2,0)),
-            mesh_.exact_vertex(mesh_.halfedge_vertex(h2,2))
-        );
-        vec3E N2 = cross(U_ref_, V2);
-        N2.x.optimize();
-        N2.y.optimize();
-        N2.z.optimize();
-        Sign result = dot(N_ref_,N2).sign();
         refNorient_cache_.push_back(std::make_pair(h2,result));
         return result;
     }
 
     bool MeshSurfaceIntersection::radial_sort(
-        vector<index_t>::iterator b, vector<index_t>::iterator e
+        RadialSort& RS,vector<index_t>::iterator b,vector<index_t>::iterator e
     ) {
         if(index_t(e-b) <= 2) {
             return true;
         }
-        radial_sort_.init(*b);
+        RS.init(*b);
         std::sort(
             b, e,
             [&](index_t h1, index_t h2)->bool {
-                return radial_sort_(h1,h2);
+                return RS(h1,h2);
             }
         );
-        return !radial_sort_.degenerate();
+        return !RS.degenerate();
     }
 
     void MeshSurfaceIntersection::build_Weiler_model() {
@@ -815,6 +978,8 @@ namespace GEO {
                 sew3(3*f1,  3*f2+1);
                 sew3(3*f1+1,3*f2  );
                 sew3(3*f1+2,3*f2+2);
+                // Copy attributes
+                mesh_.facets.attributes().copy_item(f2,f1);
             }
         }
 
@@ -873,41 +1038,83 @@ namespace GEO {
             }
             start.push_back(H.size());
         }
+
         
         // Step 4: radial sort
         {
             Logger::out("Radial sort") << "Nb radial edges:"
                                        << start.size()-1 << std::endl;
             Stopwatch W("Radial sort");
-            for(index_t k=0; k<start.size()-1; ++k) {
-                // std::cerr << k << "/" << start.size()-1 << std::endl;
-                vector<index_t>::iterator b =
-                    H.begin()+std::ptrdiff_t(start[k]);
-                vector<index_t>::iterator e =
-                    H.begin()+std::ptrdiff_t(start[k+1]);
-                
-                bool OK = radial_sort(b,e); // Can return !OK when it
-                                            // cannot sort (coplanar facets)
-                for(auto it=b; it!=e; ++it) {
-                    facet_corner_degenerate_[*it] = !OK;
-                }
 
-/*                
-                if(!OK) {
-                    std::cerr << std::endl;
-                    for(auto it1=b; it1!=e; ++it1) {
-                        for(auto it2=b; it2!=e; ++it2) {
-                            if(it1 != it2) {
-                                std::cerr << (it1-b) << " " << (it2-b) << std::endl;
-                                radial_sort_.test(*it1, *it2);
+            Process::spinlock log_lock = GEOGRAM_SPINLOCK_INIT;
+            index_t nb_sorted = 0;
+            index_t nb_to_sort = start.size()-1;
+            
+            parallel_for_slice(
+                0, start.size()-1,
+                [&](index_t b, index_t e) {
+                    
+                    index_t tid = Thread::current_id();
+                    
+                    RadialSort RS(*this);
+                    for(index_t k=b; k<e; ++k) {
+                        vector<index_t>::iterator ib =
+                            H.begin()+std::ptrdiff_t(start[k]);
+                        vector<index_t>::iterator ie =
+                            H.begin()+std::ptrdiff_t(start[k+1]);
+                        bool OK = radial_sort(RS,ib,ie);
+                                            // May return !OK when it
+                                            // cannot sort (coplanar facets)
+
+                        if(verbose_) {
+                            Process::acquire_spinlock(log_lock);
+                            ++nb_sorted;
+                            if(!(nb_sorted%100)) {
+                                Logger::out("Radial sort")
+                                    << String::format(
+                                        "[%2d]  %6d/%6d",
+                                        int(tid), int(nb_sorted), int(nb_to_sort)
+                                    )
+                                    << std::endl;
                             }
+                            Process::release_spinlock(log_lock);
                         }
+                        
+                        for(auto it=ib; it!=ie; ++it) {
+                            facet_corner_degenerate_[*it] = !OK;
+                        }
+
+                        /*
+                        // If we land here, it means we have co-planar overlapping 
+                        // triangles, not supposed to happen after surface intersection,
+                        // but well, sometimes it happens ! Maybe due to underflows, 
+                        // maybe due to a bug in the symbolic perturbation of the 
+                        // incircle predicate.
+                        if(!OK) {
+                            std::cerr << std::endl;
+                            for(auto it1=b; it1!=e; ++it1) {
+                                for(auto it2=b; it2!=e; ++it2) {
+                                    if(it1 != it2) {
+                                        std::cerr << (it1-b) << " " 
+                                                  << (it2-b) << std::endl;
+                                        RS.test(*it1, *it2);
+                                    }
+                                }
+                            }
+                            save_radial("radial",b,e);
+                            exit(-1);
+                        }
+                        */
                     }
-                    save_radial("radial",b,e);
-                    exit(-1);
+                    if(verbose_) {
+                        Process::acquire_spinlock(log_lock);
+                        Logger::out("Radial sort")
+                            << String::format("[%2d] done",int(tid))
+                            << std::endl;
+                        Process::release_spinlock(log_lock);
+                    }                    
                 }
-*/
-            }
+            );
         }
         
         // Step 5: create alpha2 links
@@ -1004,6 +1211,7 @@ namespace GEO {
         if(N.x < 0) {
             leftmost_f = alpha3_facet(leftmost_f);
         }
+        /*
         if(false) {
             std::ofstream out("leftmost.obj");
             index_t v1 = mesh_.facets.vertex(leftmost_f,0);
@@ -1014,7 +1222,7 @@ namespace GEO {
             out << "v " << vec3(mesh_.vertices.point_ptr(v3)) << std::endl;
             out << "f 1 2 3" << std::endl;
         }
-        
+        */
         std::stack<index_t> S;
         on_external_shell[leftmost_f] = 1;
         S.push(leftmost_f);
@@ -1031,11 +1239,6 @@ namespace GEO {
         }
     }
 
-    void MeshSurfaceIntersection::save_exact(const std::string& filename) {
-        std::ofstream out(filename);
-        
-    }
-    
     /***********************************************************************/
 }
 
@@ -1138,7 +1341,7 @@ namespace {
         }
 
         char cur_char() const {
-            return *ptr_;
+            return (ptr_ == expr_.end()) ? '\0' : *ptr_;
         }
         
         void next_char() {
@@ -1399,13 +1602,15 @@ namespace GEO {
     }    
 }
 
-/************************************************************************************/
+/******************************************************************************/
 
 namespace {
     using namespace GEO;
     
     void copy_operand(Mesh& result, const Mesh& operand, index_t operand_id) {
-        Attribute<index_t> operand_bit(result.facets.attributes(), "operand_bit");
+        Attribute<index_t> operand_bit(
+            result.facets.attributes(), "operand_bit"
+        );
         index_t v_ofs = result.vertices.create_vertices(operand.vertices.nb());
         for(index_t v: operand.vertices) {
             const double* p_src = operand.vertices.point_ptr(v);            
@@ -1435,7 +1640,9 @@ namespace GEO {
         Mesh& result, Mesh& A, Mesh& B, const std::string& operation
     ) {
         if(&result == &A) {
-            Attribute<index_t> operand_bit(result.facets.attributes(), "operand_bit");
+            Attribute<index_t> operand_bit(
+                result.facets.attributes(), "operand_bit"
+            );
             for(index_t f: A.facets) {
                 operand_bit[f] = index_t(1);
             }

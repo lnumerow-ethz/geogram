@@ -37,36 +37,51 @@
  *
  */
 
-#include <geogram/basic/command_line.h>
-#include <android/log.h>
+#ifndef H_USER_CALLBACK_ANDROID_H
+#define H_USER_CALLBACK_ANDROID_H
 
 /**
- * \file geogram/basic/android_wrapper.h
- * \brief This file should be included first in Android applications
- * \details Calls application's main() from android_main()
+ * \file geogram_gfx/gui/user_callback_android.h
+ * \brief functions to handle user input in the rendering area of
+ *   a geogram application
+ * \details translates fingers,stylus,mouse android events into a unified 
+ *   callback.
  */
 
+#ifdef __ANDROID__
 
-#define main wrapped_main
-int wrapped_main(int argc, char** argv);
+#include <geogram_gfx/gui/events.h>
+#include <android_native_app_glue.h>
 
-extern "C" void android_main(struct android_app* app);
+/**
+ * x,y window coordinats (0..width-1 x 0..height-1)
+ * button: one of 0:left, 1:right, 2:middle
+ * action: one of 0:UP, 1:DOWN, 2:DRAG
+ * source: one of 0:KEYBOARD, 1:MOUSE, 2:FINGER, 3:STYLUS
+ */
+typedef void (*ImGui_ImplAndroidExt_MouseUserCallback)(
+    float x, float y, int button, int action, int source
+);
 
-static int argc = 1;
-static const char* cmdline = "geogram";
-static const char* argv[] = {
-    cmdline,
-    nullptr
-};
+/**
+ * \brief Registers a user mouse event handler.
+ * \details the mouse handler needs to test the ImGui::GetIO().WantCaptureMouse
+ * flag to determine whether the event should be processed. The reason why
+ * it is not tested before the handler is because when a menu is open and
+ * the user clicks outside the menu, the flag is still set (this situation
+ * needs special code to be handled properly).
+ */
+ void ImGui_ImplAndroidExt_SetMouseUserCallback(
+    ImGui_ImplAndroidExt_MouseUserCallback CB
+);
 
-void android_main(struct android_app* app) {
-    __android_log_print(ANDROID_LOG_VERBOSE, "GEOGRAM", "Initializing");
-    GEO::initialize();
-    __android_log_print(ANDROID_LOG_VERBOSE, "GEOGRAM", "Set android app");
-    GEO::CmdLine::set_android_app(app);
-    __android_log_print(ANDROID_LOG_VERBOSE, "GEOGRAM", "Calling main()");    
-    wrapped_main(argc, (char**)argv);
-}
+/**
+ * \brief Processes an event and calls the registered user callback accordingly
+ * \details can be called right after the ImGui event handler
+ */
+int32_t ImGui_ImplAndroidExt_HandleEventUserCallback(
+    struct android_app* app, AInputEvent* event
+);
 
-
-
+#endif
+#endif

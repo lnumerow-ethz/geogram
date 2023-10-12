@@ -355,12 +355,27 @@ GLUPcontext glupCreateContext() {
     
     std::string GLUP_profile = GEO::CmdLine::get_arg("gfx:GLUP_profile");
     GLUP::Context* result = nullptr;
-
-    if(GLUP_profile == "auto") {
+ 
+    if(GLUP_profile == "auto") { 
       
-#if defined(GEO_OS_EMSCRIPTEN) || defined(GEO_OS_APPLE) || defined(GEO_OS_ANDROID)
+#if defined(GEO_OS_EMSCRIPTEN)||defined(GEO_OS_APPLE)||defined(GEO_OS_ANDROID)
 	GLUP_profile = "GLUPES2";
-//	GLUP_profile = "GLUP150"; // Does something but bugged / not fully functional.
+//	GLUP_profile = "GLUP150"; // On Android, does something but bugged 
+//      CmdLine::set_arg("gfx:GL_debug",true); // Uncomment for OpenGL debugging
+
+#if defined(GEO_OS_ANDROID)
+        GLint max_element_index;
+        glGetIntegerv(GL_MAX_ELEMENT_INDEX, &max_element_index);
+        GLint max_elements_indices;
+        glGetIntegerv(GL_MAX_ELEMENTS_INDICES, &max_elements_indices);        
+        GLint max_elements_vertices;
+        glGetIntegerv(GL_MAX_ELEMENTS_VERTICES, &max_elements_vertices);
+        Logger::out("GLES") <<  "max element index:" << max_element_index
+                            << " max elements indices:" << max_elements_indices
+                            << " max elements vertices:" << max_elements_vertices
+                            << std::endl;
+#endif
+        
 #else
       GEO_CHECK_GL();      
       double GLSL_version = GEO::GLSL::supported_language_version();

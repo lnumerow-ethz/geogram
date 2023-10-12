@@ -112,6 +112,7 @@ namespace GEO {
         Tecnstr_.resize(0);
         Tnext_.resize(0);
         Tprev_.resize(0);
+        clear_cache();
     }
 
     void CDTBase2d::create_enclosing_triangle(
@@ -146,6 +147,9 @@ namespace GEO {
             swap_edge(t0);
         }
     }
+
+    void CDTBase2d::clear_cache() {
+    }
     
     index_t CDTBase2d::insert(index_t v, index_t hint) {
         bool keep_duplicates = false;
@@ -176,6 +180,11 @@ namespace GEO {
                 v2T_.pop_back();
                 --nv_;
             }
+            // If we cached some predicates, we need to clear the cache,
+            // because everything cached relating to latest vertex becomes
+            // invalid since the same index will be used later by another
+            // point.
+            clear_cache();
             return v;
         }
 
@@ -523,7 +532,7 @@ namespace GEO {
             index_t t1 = Q.pop_back();
             if(!is_convex_quad(t1)) {
                 // Sanity check: if the only remaining edge to flip does
-                // not form a convexdd quad, it means we are going to
+                // not form a convex quad, it means we are going to
                 // flip forever ! (shoud not happen)
                 geo_assert(!Q.empty());
                 Q.push_front(t1);
@@ -574,7 +583,18 @@ namespace GEO {
     }
 
     void CDTBase2d::Delaunayize_vertex_neighbors(index_t v, DList& S) {
+        index_t count = 0;
         while(!S.empty()) {
+            // NASA programming style: all loops have
+            // a maximum number of iterations
+            ++count;
+            if(count > 10*nT()) {
+                Logger::warn("CDT2d")
+                    << "Emergency exit in Delaunayize_vertex_neighbors()"
+                    << std::endl;
+                S.clear();
+                return;
+            }
             index_t t1 = S.pop_back();
             geo_debug_assert(Tv(t1,0) == v);
             if(Tedge_is_constrained(t1,0)) {
@@ -599,9 +619,19 @@ namespace GEO {
     }
     
     void CDTBase2d::Delaunayize_new_edges(DList& N) {
+        index_t count = 0;
         bool swap_occured = true;
         while(swap_occured) {
             swap_occured = false;
+            // NASA programming style: all loops have
+            // a maximum number of iterations
+            ++count;
+            if(count > 10*nT()) {
+                Logger::warn("CDT2d")
+                    << "Emergency exit in Delaunayize_new_edges()"
+                    << std::endl;
+                break;
+            }
             for(index_t t1 = N.front(); t1 != index_t(-1); t1 = N.next(t1)) {
                 if(Tedge_is_constrained(t1,0)) {
                     continue;

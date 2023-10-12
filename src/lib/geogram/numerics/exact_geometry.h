@@ -43,6 +43,7 @@
 #include <geogram/basic/common.h>
 #include <geogram/basic/geometry.h>
 #include <geogram/numerics/expansion_nt.h>
+#include <geogram/numerics/interval_nt.h>
 
 /**
  * \file geogram/numerics/exact_geometry.h
@@ -69,6 +70,12 @@ namespace GEO {
      */
     typedef vecng<3,expansion_nt> vec3E;    
 
+    /**
+     * \brief vec3 with coordinates as interval_nt
+     * \details Coordinates support +,-,*
+     */
+    typedef vecng<3,interval_nt> vec3I;    
+    
     /**
      * \brief 2D vector in homogeneous coordinates
      *  with coordinates as arithmetic expansions
@@ -164,6 +171,7 @@ namespace GEO {
         expansion_nt w;
     };
 
+    
     /**
      * \brief 3D vector in homogeneous coordinates
      *  with coordinates as arithmetic expansions.
@@ -388,6 +396,8 @@ namespace GEO {
             coord_index_t axis
         );
 
+        void GEOGRAM_API orient_2d_projected_stats(); 
+        
         // TODO: check, it seems that orient_3d(vec3,...) and
         // orient_3d(vec3HE,...) have opposite orientations !
         Sign GEOGRAM_API orient_3d(
@@ -572,6 +582,8 @@ namespace GEO {
     coord_index_t GEOGRAM_API triangle_normal_axis_exact(
         const vec3& p1, const vec3& p2, const vec3& p3
     );
+
+    /************************************************************************/
 }
 
 #endif
