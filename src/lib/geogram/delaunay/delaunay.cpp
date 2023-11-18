@@ -189,6 +189,7 @@ namespace GEO {
     Delaunay::Delaunay(coord_index_t dimension) {
         set_dimension(dimension);
         vertices_ = nullptr;
+        weights_ = nullptr;
         nb_vertices_ = 0;
         nb_cells_ = 0;
         cell_to_v_ = nullptr;
@@ -249,9 +250,9 @@ namespace GEO {
         // Derived classes are supposed to overload.
         geo_assert(nb_vertices() > 0);
         index_t result = 0;
-        double d = Geom::distance2(vertex_ptr(0), p, dimension());
+        double d = Geom::distance2(vertex_ptr(0), p, dimension()) - weight(0); /// lnumerow: add weight
         for(index_t i = 1; i < nb_vertices(); i++) {
-            double cur_d = Geom::distance2(vertex_ptr(i), p, dimension());
+            double cur_d = Geom::distance2(vertex_ptr(i), p, dimension()) - weight(i); /// lnumerow: add weight
             if(cur_d < d) {
                 d = cur_d;
                 result = i;

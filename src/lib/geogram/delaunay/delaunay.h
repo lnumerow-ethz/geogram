@@ -235,6 +235,10 @@ namespace GEO {
             return vertices_ + vertex_stride_ * i;
         }
 
+        double weight(index_t i) const {
+            return has_weights_ ? weights_[i] : 0;
+        }
+
         /**
          * \brief Gets the number of vertices.
          * \return the number of vertices in this Delaunay
@@ -740,6 +744,8 @@ namespace GEO {
         index_t cell_neigh_stride_;
 
         const double* vertices_;
+        const double* weights_; /// lnumerow: expose weights
+        bool has_weights_; /// lnumerow: expose weights
         index_t nb_vertices_;
         index_t nb_cells_;
         const signed_index_t* cell_to_v_;

@@ -2956,7 +2956,8 @@ namespace GEO {
 	Delaunay(3),
 	periodic_(periodic),
 	period_(period,period,period),
-	weights_(nullptr),
+    /// lnumerow: move weights to superclass.
+//	weights_(nullptr),
 	update_periodic_v_to_cell_(false),
 	has_empty_cells_(false),
 	nb_reallocations_(0),
@@ -2976,7 +2977,8 @@ namespace GEO {
 	Delaunay(3),
 	periodic_(true),
 	period_(period),
-	weights_(nullptr),
+	/// lnumerow: move weights to superclass.
+//	weights_(nullptr),
 	update_periodic_v_to_cell_(false),
 	has_empty_cells_(false),
 	nb_reallocations_(0),
@@ -3044,6 +3046,7 @@ namespace GEO {
 
     void PeriodicDelaunay3d::set_weights(const double* weights) {
 	has_empty_cells_ = false;
+    has_weights_ = true;
 	weights_ = weights;	
     }
     

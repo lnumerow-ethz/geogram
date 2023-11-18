@@ -977,7 +977,8 @@ namespace GEOGen {
         void intersect_geom(
             PointAllocator& target_intersections,
             const Vertex& vq1, const Vertex& vq2,
-            const double* p1, const double* p2
+            const double* p1, const double* p2,
+            const double w1 = 0, const double w2 = 0
         ) {
             const double* q1 = vq1.point();
             const double* q2 = vq2.point();
@@ -990,6 +991,8 @@ namespace GEOGen {
                 l1 += q2[c] * n;
                 l2 += q1[c] * n;
             }
+            d += w1 - w2; /// lnumerow: Adjust for weighted Delaunay.
+
             d = 0.5 * d;
             l1 = ::fabs(l1 + d);
             l2 = ::fabs(l2 + d);
@@ -1019,13 +1022,15 @@ namespace GEOGen {
          */
         template <index_t DIM>
         Sign side_fast(
-            const double* p1, const double* p2
+            const double* p1, const double* p2,
+            const double w1 = 0, const double w2 = 0
         ) const {
             double r = 0.0;
             for(index_t c = 0; c < DIM; ++c) {
                 r += GEO::geo_sqr(p2[c] - point()[c]);
                 r -= GEO::geo_sqr(p1[c] - point()[c]);
             }
+            r += w1 - w2; /// lnumerow: Adjust for weighted Delaunay.
             return GEO::geo_sgn(r);
         }
 

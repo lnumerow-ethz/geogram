@@ -391,8 +391,10 @@ namespace GEO {
 	
 	bool periodic_;
         vec3 period_;
-	
-	const double* weights_;
+
+        /// lnumerow: move weights_ to superclass.
+	//const double* weights_;
+    //bool has_weights_;
         vector<signed_index_t> cell_to_v_store_;
         vector<signed_index_t> cell_to_cell_store_;
         vector<index_t> cell_next_;

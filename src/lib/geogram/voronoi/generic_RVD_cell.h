@@ -913,7 +913,8 @@ namespace GEOGen {
                     intersections_,
                     triangle_dual(t),
                     triangle_dual(triangle_adjacent(t, e)),
-                    delaunay->vertex_ptr(i), delaunay->vertex_ptr(j)
+                    delaunay->vertex_ptr(i), delaunay->vertex_ptr(j),
+                    delaunay->weight(i), delaunay->weight(j)
                 );
 		
                 if(symbolic) {
@@ -1082,6 +1083,7 @@ namespace GEOGen {
                 result += GEO::geo_sqr(q[c] - pj[c]);
                 result -= GEO::geo_sqr(q[c] - pi[c]);
             }
+            result += delaunay->weight(i) - delaunay->weight(j); /// lnumerow: Adjust for weighted Delaunay.
             return result;
         }
 
@@ -1179,7 +1181,9 @@ namespace GEOGen {
             } else {
                 result = v.side_fast<DIM>(
                     delaunay->vertex_ptr(i),
-                    delaunay->vertex_ptr(j)
+                    delaunay->vertex_ptr(j),
+                    delaunay->weight(i),
+                    delaunay->weight(j)
                 );
             }
             return result;
