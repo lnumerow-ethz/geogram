@@ -745,7 +745,7 @@ namespace GEO {
 
         const double* vertices_;
         const double* weights_; /// lnumerow: expose weights
-        bool has_weights_; /// lnumerow: expose weights
+        bool has_weights_ = false; /// lnumerow: expose weights
         index_t nb_vertices_;
         index_t nb_cells_;
         const signed_index_t* cell_to_v_;
